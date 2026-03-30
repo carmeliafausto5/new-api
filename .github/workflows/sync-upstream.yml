@@ -1,0 +1,65 @@
+name: Sync Upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一凌晨2点执行
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/QuantumNous/new-api.git || true
+          git fetch upstream
+
+      - name: Attempt merge
+        id: merge
+        continue-on-error: true
+        run: |
+          git merge upstream/main --no-edit
+
+      - name: Push if no conflicts
+        if: steps.merge.outcome == 'success'
+        run: |
+          git push origin main
+
+      - name: Create issue if conflicts
+        if: steps.merge.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '⚠️ Upstream sync failed - merge conflicts detected';
+            const body = `Automatic sync from upstream failed due to merge conflicts.
+
+            Please manually resolve conflicts:
+            \`\`\`bash
+            git fetch upstream
+            git merge upstream/main
+            # Resolve conflicts
+            git commit
+            git push origin main
+            \`\`\`
+
+            Triggered by: ${{ github.event_name }}
+            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['sync', 'conflict']
+            });
